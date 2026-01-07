@@ -2,8 +2,7 @@
 #include "BrutalAuth.hpp"
 
 int main() {
-
-    BrutalAuth auth("a427369e-3a63-461b-b14d-d4fb1c137e3d");
+    BrutalAuth auth("application_id", "api.brutalauth.site", "1.2");
 
     std::cout << "=== BRUTAL AUTH CLIENT ===\n"
         << "1. Register new account\n"
@@ -25,6 +24,8 @@ int main() {
         if (auth.registerUser(license, username, password)) {
             std::cout << "Registration completed! You can now login.\n";
         }
+        else {
+        }
     }
     else if (choice == 2) {
         std::string username, password;
@@ -38,6 +39,8 @@ int main() {
             std::cout << "Press Enter to exit...\n";
             std::cin.ignore(1000000, '\n');
             std::cin.get();
+        }
+        else {
         }
     }
     return 0;
