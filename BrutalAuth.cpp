@@ -148,7 +148,7 @@ namespace {
         std::string& outBody)
     {
         bool ok = false;
-        HINTERNET hSession = WinHttpOpen(L"BrutalAuth/1.0",
+        HINTERNET hSession = WinHttpOpen(L"BrutalAuth/2.0", // Updated to 2.0
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
             WINHTTP_NO_PROXY_NAME,
             WINHTTP_NO_PROXY_BYPASS, 0);
@@ -166,12 +166,10 @@ namespace {
                 std::wstring headers = L"Content-Type: application/json\r\n";
                 BOOL sent = WinHttpSendRequest(hRequest,
                     headers.c_str(), (DWORD)headers.size(),
-                    WINHTTP_NO_REQUEST_DATA, 0,
+                    (void*)jsonBody.data(), (DWORD)jsonBody.size(), // Use void* for direct data
                     (DWORD)jsonBody.size(), 0);
                 if (sent) {
-                    BOOL wrote = WinHttpWriteData(hRequest, jsonBody.data(),
-                        (DWORD)jsonBody.size(), nullptr);
-                    if (wrote && WinHttpReceiveResponse(hRequest, nullptr)) {
+                    if (WinHttpReceiveResponse(hRequest, nullptr)) {
                         DWORD dwSize = 0;
                         do {
                             if (!WinHttpQueryDataAvailable(hRequest, &dwSize) || dwSize == 0) break;
@@ -219,7 +217,7 @@ namespace {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)jsonBody.size());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &outBody);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "BrutalAuth/1.0");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "BrutalAuth/2.0");
 
         CURLcode res = curl_easy_perform(curl);
         curl_slist_free_all(headers);
@@ -241,8 +239,8 @@ namespace {
 
 // -------------------- BrutalAuth methods (all out-of-class) --------------------
 
-BrutalAuth::BrutalAuth(std::string applicationId, std::string host)
-    : applicationId_(std::move(applicationId)), host_(std::move(host)) {
+BrutalAuth::BrutalAuth(std::string applicationId, std::string host, std::string version)
+    : applicationId_(std::move(applicationId)), host_(std::move(host)), version_(std::move(version)) {
 }
 
 bool BrutalAuth::contains_success_true(const std::string& body) {
@@ -273,14 +271,16 @@ std::string BrutalAuth::makeJsonRegister(const std::string& licenseKey,
 std::string BrutalAuth::makeJsonLogin(const std::string& username,
     const std::string& password,
     const std::string& hwid,
-    const std::string& applicationId)
+    const std::string& applicationId,
+    const std::string& version)
 {
     std::ostringstream o;
     o << "{"
         << "\"username\":\"" << username << "\","
         << "\"password\":\"" << password << "\","
         << "\"hwid\":\"" << hwid << "\","
-        << "\"applicationId\":\"" << applicationId << "\""
+        << "\"applicationId\":\"" << applicationId << "\","
+        << "\"version\":\"" << version << "\""
         << "}";
     return o.str();
 }
@@ -298,13 +298,36 @@ bool BrutalAuth::postJson(const std::string& pathOrUrl,
     return false;
 #endif
 }
+static std::string extract_error_message(const std::string& body)
+{
+    const std::string key = "\"error\"";
+    auto keyPos = body.find(key);
+    if (keyPos == std::string::npos)
+        return "Unknown error";
+
+    auto colon = body.find(':', keyPos);
+    if (colon == std::string::npos)
+        return "Unknown error";
+
+    auto firstQuote = body.find('"', colon + 1);
+    if (firstQuote == std::string::npos)
+        return "Unknown error";
+
+    auto secondQuote = body.find('"', firstQuote + 1);
+    if (secondQuote == std::string::npos)
+        return "Unknown error";
+
+    return body.substr(firstQuote + 1, secondQuote - firstQuote - 1);
+}
 
 bool BrutalAuth::registerUser(const std::string& licenseKey,
     const std::string& username,
     const std::string& password)
 {
     const std::string hwid = getHardwareId();
-    const std::string payload = makeJsonRegister(licenseKey, username, password, hwid, applicationId_);
+    const std::string payload =
+        makeJsonRegister(licenseKey, username, password, hwid, applicationId_);
+
     std::string response;
     const bool ok = postJson("/register-user", payload, response);
 
@@ -312,19 +335,26 @@ bool BrutalAuth::registerUser(const std::string& licenseKey,
         std::cerr << "[BRUTAL AUTH] HTTP error during register.\n";
         return false;
     }
+
     if (contains_success_true(response)) {
         std::cout << "[BRUTAL AUTH] Registration successful!\n";
         return true;
     }
-    std::cout << "[BRUTAL AUTH] Registration failed! Server said:\n" << response << "\n";
+
+    std::cerr << "[BRUTAL AUTH] Registration failed: "
+        << extract_error_message(response) << "\n";
+
     return false;
 }
+
 
 bool BrutalAuth::loginUser(const std::string& username,
     const std::string& password)
 {
     const std::string hwid = getHardwareId();
-    const std::string payload = makeJsonLogin(username, password, hwid, applicationId_);
+    const std::string payload =
+        makeJsonLogin(username, password, hwid, applicationId_, version_);
+
     std::string response;
     const bool ok = postJson("/login-user", payload, response);
 
@@ -332,10 +362,14 @@ bool BrutalAuth::loginUser(const std::string& username,
         std::cerr << "[BRUTAL AUTH] HTTP error during login.\n";
         return false;
     }
+
     if (contains_success_true(response)) {
         std::cout << "[BRUTAL AUTH] Login successful!\n";
         return true;
     }
-    std::cout << "[BRUTAL AUTH] Login failed! Server said:\n" << response << "\n";
+
+    std::cerr << "[BRUTAL AUTH] Login failed: "
+        << extract_error_message(response) << "\n";
+
     return false;
 }
